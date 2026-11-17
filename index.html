@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#14191B">
+<title>Listening Brain AR</title>
+<meta name="description" content="Point your phone at the poster figure: hear the music and watch the brain networks that followed it, in one listener's fMRI.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%23E8742F'/%3E%3Cpath d='M14 36c6-14 10 10 16-4s10 10 20-6' stroke='white' stroke-width='5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<script type="importmap">
+{ "imports": {
+  "three": "./lib/three/three.module.js",
+  "three/addons/OrbitControls.js": "./lib/three/OrbitControls.js",
+  "three/addons/renderers/CSS3DRenderer.js": "./lib/three/CSS3DRenderer.js",
+  "mindar-image-three": "./lib/mindar/mindar-image-three.prod.js"
+} }
+</script>
+<style>
+:root {
+  --ink: #F1EEEA; --ink-2: #B9B3AE; --panel: rgba(20, 25, 27, 0.82); --panel-solid: #171D1F; --rule: rgba(255,255,255,0.14);
+  --accent: #E8742F; --bg: #14191B;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: var(--sans); overflow: hidden; }
+#stage { position: fixed; inset: 0; }
+#stage video { object-fit: cover; }
+button { font: inherit; color: inherit; }
+
+/* splash */
+#splash { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 20px 16px;
+  background: radial-gradient(120% 80% at 50% 0%, #22302F 0%, #14191B 60%); overflow-y: auto; }
+.card { width: min(30rem, 100%); }
+.kicker { text-transform: uppercase; letter-spacing: .12em; font-size: .72rem; color: var(--accent); margin: 0 0 .5rem; font-weight: 600; }
+h1 { font-size: clamp(1.7rem, 7vw, 2.3rem); line-height: 1.08; margin: 0 0 .7rem; letter-spacing: -.01em; }
+.lede { color: var(--ink-2); font-size: 1rem; line-height: 1.45; margin: 0 0 1.2rem; }
+.steps { list-style: none; padding: 0; margin: 0 0 1.4rem; display: grid; gap: .55rem; }
+.steps li { display: grid; grid-template-columns: 1.8rem 1fr; gap: .5rem; align-items: start; font-size: .95rem; line-height: 1.35; }
+.steps b { display: grid; place-items: center; width: 1.6rem; height: 1.6rem; border-radius: 50%; background: rgba(232,116,47,.18); color: var(--accent); font-size: .85rem; }
+.btn { display: block; width: 100%; border: 0; border-radius: 14px; padding: 1rem 1.1rem; font-size: 1.05rem; font-weight: 650; cursor: pointer; margin: 0 0 .65rem; }
+.btn.primary { background: var(--accent); color: #14191B; }
+.btn.ghost { background: transparent; color: var(--ink); border: 1px solid var(--rule); }
+.fine { color: var(--ink-2); font-size: .78rem; line-height: 1.45; margin: .8rem 0 0; }
+.fine a { color: var(--ink-2); }
+
+/* top status */
+#top { position: fixed; top: 0; left: 0; right: 0; z-index: 10; display: flex; justify-content: space-between; align-items: center;
+  padding: calc(env(safe-area-inset-top) + 10px) 14px 10px; pointer-events: none; }
+.pill { pointer-events: auto; display: inline-flex; align-items: center; gap: .45rem; background: var(--panel); border: 1px solid var(--rule);
+  border-radius: 999px; padding: .4rem .75rem; font-size: .8rem; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+.dot { width: .55rem; height: .55rem; border-radius: 50%; background: #8A8580; }
+.dot.on { background: #6BCB77; box-shadow: 0 0 0 4px rgba(107,203,119,.2); }
+#modeBtn { cursor: pointer; }
+
+/* scan hint */
+#hint { position: fixed; z-index: 9; left: 50%; top: 42%; transform: translate(-50%, -50%); width: min(78vw, 22rem); aspect-ratio: 1.61;
+  border: 2px dashed rgba(255,255,255,.7); border-radius: 14px; display: grid; place-items: end center; pointer-events: none; transition: opacity .3s; }
+#hint span { background: var(--panel); border-radius: 10px; padding: .45rem .7rem; font-size: .85rem; margin-bottom: -2.6rem; white-space: nowrap; }
+#hint.hide { opacity: 0; }
+
+/* HUD */
+#hud { position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; padding: 0 10px calc(env(safe-area-inset-bottom) + 10px); pointer-events: none; }
+.sheet { pointer-events: auto; background: var(--panel); border: 1px solid var(--rule); border-radius: 18px; padding: 10px 12px 10px;
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); max-width: 40rem; margin: 0 auto; }
+#caption { padding-right: 3.4rem; min-height: 2.6em; font-size: .9rem; line-height: 1.3; margin: 0 0 8px; color: var(--ink); }
+#caption .k { color: var(--accent); font-weight: 650; }
+#meters { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 5px; margin: 0 0 9px; }
+.m { display: grid; gap: 3px; justify-items: center; min-width: 0; }
+.m .bar { position: relative; width: 100%; height: 34px; border-radius: 5px; background: rgba(255,255,255,.07); overflow: hidden; }
+.m .fill { position: absolute; left: 0; right: 0; bottom: 50%; height: 0; border-radius: 3px; }
+.m .mid { position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: rgba(255,255,255,.22); }
+.m.lock .bar { box-shadow: 0 0 0 2px currentColor, 0 0 14px currentColor; }
+.m .lab { font-size: .62rem; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.row { display: flex; align-items: center; gap: 10px; }
+#play { flex: none; width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--ink); color: #14191B; cursor: pointer; display: grid; place-items: center; }
+#play svg { width: 18px; height: 18px; }
+#bar { position: relative; flex: 1; height: 26px; cursor: pointer; }
+#bar .track { position: absolute; left: 0; right: 0; top: 11px; height: 4px; border-radius: 2px; background: rgba(255,255,255,.18); }
+#bar .prog { position: absolute; left: 0; top: 11px; height: 4px; border-radius: 2px; background: var(--ink); width: 0; }
+#bar .lk { position: absolute; top: 7px; height: 12px; border-radius: 3px; opacity: .8; }
+#time { flex: none; font-variant-numeric: tabular-nums; font-size: .8rem; color: var(--ink-2); width: 3.2rem; text-align: right; }
+#tunes { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 9px -2px 0; padding: 0 2px; }
+#tunes::-webkit-scrollbar { display: none; }
+.chip { flex: none; border: 1px solid var(--rule); background: transparent; border-radius: 999px; padding: .38rem .7rem; font-size: .78rem; cursor: pointer; white-space: nowrap; }
+.chip[aria-pressed="true"] { background: var(--ink); color: #14191B; border-color: var(--ink); }
+#credit { font-size: .66rem; color: var(--ink-2); margin: 7px 0 0; line-height: 1.35; }
+#credit a { color: var(--ink-2); }
+.hidden { display: none !important; }
+/* compact sheet on short or AR screens; side panel in landscape */
+body.ar #caption { font-size: .82rem; min-height: 2.5em; }
+body.ar .m .bar { height: 24px; }
+body.ar #credit { font-size: .6rem; }
+#fold { position: absolute; right: 18px; margin-top: -4px; background: none; border: 0; color: var(--ink-2); font-size: .75rem; cursor: pointer; padding: 4px; }
+.sheet.min #meters, .sheet.min #tunes, .sheet.min #credit, .sheet.min #caption { display: none; }
+@media (orientation: landscape) and (max-height: 520px) {
+  #hud { left: auto; right: 0; top: 0; bottom: 0; width: min(46vw, 22rem); display: flex; align-items: flex-end; padding: calc(env(safe-area-inset-top) + 56px) calc(env(safe-area-inset-right) + 10px) 10px 0; }
+  .sheet { width: 100%; max-height: 100%; overflow-y: auto; }
+  #hint { left: 38%; width: min(52vw, 26rem); }
+}
+#err { position: fixed; z-index: 40; left: 12px; right: 12px; top: 40%; background: var(--panel-solid); border: 1px solid var(--rule); border-radius: 14px; padding: 14px; font-size: .9rem; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+
+<section id="splash" aria-label="Start">
+  <div class="card">
+    <p class="kicker">SFRMBM 2027 · poster · Listening Brain</p>
+    <h1>Listen to this figure</h1>
+    <p class="lede">Point your phone at the figure on the poster. You will hear the music our volunteer heard in the scanner, and see each brain network follow it, measured with fMRI on three hearings.</p>
+    <ol class="steps">
+      <li><b>1</b><span>Sound on, or headphones.</span></li>
+      <li><b>2</b><span>Tap <em>Start</em> and allow the camera.</span></li>
+      <li><b>3</b><span>Frame the figure “Listen to this figure”. Try the other pieces at the bottom.</span></li>
+    </ol>
+    <button class="btn primary" id="startAR">Start (camera)</button>
+    <button class="btn ghost" id="start3D">No poster? Open the 3D view</button>
+    <p class="fine">The camera image is analysed on your phone and never recorded or sent. One healthy volunteer, research data, not a clinical tool.
+      Music: Creative Commons excerpts from the Internet Archive (credits below the player).
+      C. de Bézenac, L. Landré, C. Meillier, P. Loureiro de Sousa · ICube, Université de Strasbourg · SILENCIO (ITI HealthTech).</p>
+  </div>
+</section>
+
+<div id="top" class="hidden">
+  <span class="pill"><span class="dot" id="trackDot"></span><span id="trackTxt">Looking for the figure</span></span>
+  <button class="pill" id="modeBtn">3D view</button>
+</div>
+<div id="hint" class="hidden"><span>Frame the figure “Listen to this figure”</span></div>
+
+<div id="hud" class="hidden">
+  <div class="sheet">
+    <button id="fold" aria-label="Fold player">fold ▾</button>
+    <p id="caption">Press play. The brain is shown 5 s behind the music, the time blood flow takes to respond.</p>
+    <div id="meters"></div>
+    <div class="row">
+      <button id="play" aria-label="Play"><svg viewBox="0 0 20 20"><path id="playIcon" d="M5 3l12 7-12 7z" fill="currentColor"/></svg></button>
+      <div id="bar"><div class="track"></div><div class="prog"></div></div>
+      <span id="time">0:00</span>
+    </div>
+    <div id="tunes" role="group" aria-label="Pieces"></div>
+    <p id="credit"></p>
+  </div>
+</div>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>
