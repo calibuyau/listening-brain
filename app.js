@@ -253,10 +253,14 @@ async function startAR() {
   anchor.onTargetLost = () => setTracking(false, "Looking for the figure");
   try { await mindar.start(); } catch (e) { return fail("The camera could not start (" + (e && e.message ? e.message : e) + "). You can still use the 3D view."); }
   setTracking(false, "Looking for the figure");
-  // re-fit once the camera reports its final frame size (some cameras change it after the stream starts)
-  const vid = $("#stage video"); if (vid) vid.addEventListener("resize", () => mindar && mindar.resize());
-  setTimeout(() => mindar && mindar.resize(), 800);
-  renderer.setAnimationLoop(() => { frame(); renderer.render(scene, camera); });
+  // re-fit whenever the camera's frame size differs from the last fit (it can change after the stream starts)
+  let fitW = 0, fitH = 0, cw = 0, ch = 0;
+  renderer.setAnimationLoop(() => {
+    const v = mindar && mindar.video, st = $("#stage");
+    if (v && v.videoWidth && (v.videoWidth !== fitW || v.videoHeight !== fitH || st.clientWidth !== cw || st.clientHeight !== ch)) {
+      fitW = v.videoWidth; fitH = v.videoHeight; cw = st.clientWidth; ch = st.clientHeight; mindar.resize();
+    }
+    frame(); renderer.render(scene, camera); });
 }
 function stopAR() { if (!mindar) return; mindar.renderer.setAnimationLoop(null); mindar.stop(); content.removeFromParent(); $("#stage").innerHTML = ""; mindar = null; }
 function start3D() {
