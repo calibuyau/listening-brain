@@ -49,6 +49,12 @@ function prepTune(t) {
   // so relative sizes between networks are kept but the colours span their full range
   const am = ROWS.flatMap(k => Array.from(out[k].mean, Math.abs)).sort((a, b) => a - b);
   meanScale = Math.max(0.05, am[Math.floor(0.95 * (am.length - 1))]);
+  const T = DATA.music_t;
+  for (const l of t.locks) {
+    if (!out[l.region]) continue; const m = out[l.region].mean; let a = 0, n = 0, all = 0;
+    for (let i = 0; i < m.length; i++) { all += m[i]; if (T[i] >= l.start && T[i] <= l.start + l.dur) { a += m[i]; n++; } }
+    l.dir = n && a / n >= all / m.length ? 1 : -1;
+  }
   return out;
 }
 function valueAt(arr, t) {           // linear interpolation on the music clock
@@ -79,16 +85,20 @@ function buildBrain() {
   const holder = new THREE.Group(); holder.add(group); holder.userData = { meshes, inner: group, span: Math.max(size.x, size.y) };
   return holder;
 }
-const GREY = new THREE.Color("#8F8985"), WHITE = new THREE.Color("#FFFFFF"), LOW = new THREE.Color("#2A2D33");
+const GREY = new THREE.Color("#8F8985"), WHITE = new THREE.Color("#FFFFFF"), LOW = new THREE.Color("#1E2126"), DEEP = new THREE.Color("#020305");
+const ARROW = d => (d > 0 ? "▲" : "▼"), DIRWORD = d => (d > 0 ? "up" : "down");
 const regCols = ROWS.map(k => new THREE.Color(REG[k][2]));
 function paintBrain(brain, t, time) {
-  const act = ROWS.map(k => valueAt(traces[k].mean, t)); const locks = activeLocks(t).map(l => ROWS.indexOf(l.region));
+  const act = ROWS.map(k => valueAt(traces[k].mean, t)); const al = activeLocks(t); const locks = al.map(l => ROWS.indexOf(l.region));
   const pulse = 0.5 + 0.5 * Math.sin(time * 7.0);
   const cols = ROWS.map((k, r) => {
-    const v = Math.min(1, Math.max(-1, act[r] / meanScale)), L = 0.5 + 0.5 * v;       // 0 = lowest, 1 = highest
-    const c = LOW.clone().lerp(regCols[r], Math.min(1, 0.08 + 1.1 * L ** 1.6)).multiplyScalar(0.6 + 0.7 * L);
-    if (L > 0.72) c.lerp(WHITE, (L - 0.72) * 1.2);
-    if (locks.includes(r)) c.lerp(WHITE, 0.15 + 0.30 * pulse);
+    // v = network's mean course now (-1 lowest .. +1 highest of this excerpt): above its level the colour brightens towards white,
+    // below it fades towards dark; 0 = the network's own colour
+    const v = Math.min(1, Math.max(-1, act[r] / meanScale));
+    const c = regCols[r].clone();
+    if (v >= 0) c.multiplyScalar(1 + 0.25 * v).lerp(WHITE, 0.55 * v ** 1.3); else c.lerp(LOW, 0.85 * (-v) ** 0.9);
+    const li = locks.indexOf(r);
+    if (li >= 0) c.lerp(al[li].dir > 0 ? WHITE : DEEP, al[li].dir > 0 ? 0.20 + 0.35 * pulse : 0.25 + 0.45 * pulse);
     return c;
   });
   for (const { mesh, reg, shade, col } of brain.userData.meshes) {
@@ -146,6 +156,14 @@ function drawOverlay(t, time) {
   octx.clearRect(0, 0, OW, OH); octx.drawImage(staticLayer, 0, 0);
   const X = tx(Math.min(30, Math.max(0, t))); const yT = py(LAY.spec[0]), yB = py(LAY.row_boxes[ROWS.length - 1][0] + LAY.row_boxes[0][1]);
   const pulse = 0.5 + 0.5 * Math.sin(time * 7.0);
+  octx.font = `700 ${Math.round(OH * 0.026)}px system-ui, sans-serif`; octx.textBaseline = "middle"; octx.textAlign = "left";
+  for (const l of tune.locks.filter(l => REG[l.region] && l.dir)) {      // up/down badge
+    const r = ROWS.indexOf(l.region), col = PRINT[l.region], x0 = tx(l.start), y0 = rowY(r, 2.3), y1 = rowY(r, -2.4), lab = `${ARROW(l.dir)} ${DIRWORD(l.dir)}`;
+    const w = octx.measureText(lab).width + 16, h = OH * 0.036, by = (y0 + y1) / 2 - h / 2;
+    octx.fillStyle = l.dir > 0 ? col : "#FFFFFF"; octx.strokeStyle = col; octx.lineWidth = 3;
+    octx.beginPath(); octx.roundRect(x0 - w - 6, by, w, h, 8); octx.fill(); octx.stroke();
+    octx.fillStyle = l.dir > 0 ? "#FFFFFF" : col; octx.fillText(lab, x0 - w + 2, by + h / 2);
+  }
   for (const l of activeLocks(t)) {      // glowing lock-on box
     const r = ROWS.indexOf(l.region), col = PRINT[l.region]; const x0 = tx(l.start), x1 = tx(l.start + l.dur), y0 = rowY(r, 2.3), y1 = rowY(r, -2.4);
     octx.save(); octx.shadowColor = col; octx.shadowBlur = 30 + 25 * pulse; octx.strokeStyle = col; octx.lineWidth = 7;
@@ -197,7 +215,7 @@ function frame() {
 // ---------------------------------------------------------------- HUD
 function fmt(s) { s = Math.max(0, s); return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`; }
 function buildHud() {
-  $("#meters").innerHTML = ROWS.map(k => `<div class="m" data-k="${k}" style="color:${REG[k][2]}"><div class="bar"><div class="mid"></div><div class="fill" style="background:${REG[k][2]}"></div></div><div class="lab">${REG[k][1]}</div></div>`).join("");
+  $("#meters").innerHTML = ROWS.map(k => `<div class="m" data-k="${k}" style="color:${REG[k][2]}"><div class="bar"><div class="mid"></div><div class="fill" style="background:${REG[k][2]}"></div><div class="dir"></div></div><div class="lab">${REG[k][1]}</div></div>`).join("");
   $("#tunes").innerHTML = DATA.tunes.map((t, i) => `<button class="chip" data-i="${i}" aria-pressed="${t.id === tune.id}">${t.name}</button>`).join("");
   $("#tunes").onclick = (ev) => { const b = ev.target.closest(".chip"); if (b) selectTune(+b.dataset.i, true); };
   $("#fold").onclick = () => { const sh = $(".sheet"); sh.classList.toggle("min"); $("#fold").textContent = sh.classList.contains("min") ? "unfold ▴" : "fold ▾"; };
@@ -217,21 +235,23 @@ function refreshBar() {
 function summary() {
   const ls = tune.locks.filter(l => REG[l.region]);
   if (!ls.length) return "No lock-on moment in this excerpt.";
-  const names = [...new Set(ls.map(l => REG[l.region][0].toLowerCase()))];
-  return `This excerpt: ${ls.length} lock-on moment${ls.length > 1 ? "s" : ""} (${names.join(", ")}). The brain is shown 5 s behind the music, the time blood flow takes to respond.`;
+  return `This excerpt: ${ls.length} lock-on moment${ls.length > 1 ? "s" : ""} (${ls.map(l => REG[l.region][0].toLowerCase() + " " + ARROW(l.dir)).join(", ")}). ` +
+    `Brighter = network above its usual level, darker = below; ▲ / ▼ = lock-on while up / down. The brain is shown 5 s behind the music.`;
 }
 function updateHud(t, time) {
   const act = ROWS.map(k => valueAt(traces[k].mean, t)); const locks = activeLocks(t);
   document.querySelectorAll(".m").forEach((m, r) => {
     const v = Math.max(-1, Math.min(1, act[r] / meanScale)); const f = m.querySelector(".fill");
     f.style.height = `${Math.abs(v) * 50}%`; f.style.bottom = v >= 0 ? "50%" : `${50 - Math.abs(v) * 50}%`;
-    m.classList.toggle("lock", locks.some(l => l.region === ROWS[r]));
+    const lk = locks.find(l => l.region === ROWS[r]); m.classList.toggle("lock", !!lk);
+    m.querySelector(".dir").textContent = lk && lk.dir ? ARROW(lk.dir) : "";
   });
   const key = locks.map(l => l.region).join("|");
   if (key !== lastLockKey) {
     if (locks.length) {
-      $("#caption").innerHTML = locks.map(l => `<span class="k" style="color:${REG[l.region][2]}">${REG[l.region][0]}</span>`).join(" and ") +
-        ` lock${locks.length > 1 ? "" : "s"} on: the same course on all three hearings (p = ${locks.map(l => l.p.toFixed(3).replace("0.", ".")).join(", ")}).`;
+      $("#caption").innerHTML = locks.map(l => `<span class="k" style="color:${REG[l.region][2]}">${REG[l.region][0]} ${ARROW(l.dir)}</span>`).join(" and ") +
+        ` lock${locks.length > 1 ? "" : "s"} on: the same course on all three hearings (p = ${locks.map(l => l.p.toFixed(3).replace("0.", ".")).join(", ")}), ` +
+        locks.map(l => (l.dir > 0 ? "above" : "below")).join(" and ") + " the usual level.";
       if (navigator.vibrate && !audio.paused) navigator.vibrate(35);
     } else $("#caption").textContent = summary();
     lastLockKey = key;
