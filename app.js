@@ -23,7 +23,7 @@ const PRINT = { "auditory": "#2E6F8E", "Visual": "#8C8686", "Somatomotor": "#5FA
 const YEO = { 1: "Visual", 2: "Somatomotor", 3: "Dorsal attention", 4: "Salience (ventral attention)", 5: "Limbic", 6: "Frontoparietal control", 7: "Default mode" };
 const ROWS = Object.keys(REG);
 
-let DATA, BRAIN, LAY, tune, traces, sdScale;
+let DATA, BRAIN, LAY, tune, traces, sdScale, meanScale = 1;
 const audio = new Audio(); audio.loop = true; audio.preload = "auto"; audio.crossOrigin = "anonymous";
 const DEBUG_T = new URLSearchParams(location.search).get("t"), DEBUG_ROT = new URLSearchParams(location.search).get("rot");
 let userPaused = false, mode = null, mindar = null, r3d = null, foundOnce = false, lastLockKey = "";
@@ -45,6 +45,10 @@ function prepTune(t) {
     out[key].hs = out[key].hs.map(h => h.map(v => v / sdScale));
     out[key].mean = out[key].hs[0].map((_, i) => (out[key].hs[0][i] + out[key].hs[1][i] + out[key].hs[2][i]) / 3);
   }
+  // brain and meters: one scale shared by all networks of this excerpt = 95th percentile of |mean course|,
+  // so relative sizes between networks are kept but the colours span their full range
+  const am = ROWS.flatMap(k => Array.from(out[k].mean, Math.abs)).sort((a, b) => a - b);
+  meanScale = Math.max(0.05, am[Math.floor(0.95 * (am.length - 1))]);
   return out;
 }
 function valueAt(arr, t) {           // linear interpolation on the music clock
@@ -75,21 +79,21 @@ function buildBrain() {
   const holder = new THREE.Group(); holder.add(group); holder.userData = { meshes, inner: group, span: Math.max(size.x, size.y) };
   return holder;
 }
-const GREY = new THREE.Color("#B3ADA8"), WHITE = new THREE.Color("#FFFFFF");
+const GREY = new THREE.Color("#8F8985"), WHITE = new THREE.Color("#FFFFFF"), LOW = new THREE.Color("#2A2D33");
 const regCols = ROWS.map(k => new THREE.Color(REG[k][2]));
 function paintBrain(brain, t, time) {
   const act = ROWS.map(k => valueAt(traces[k].mean, t)); const locks = activeLocks(t).map(l => ROWS.indexOf(l.region));
   const pulse = 0.5 + 0.5 * Math.sin(time * 7.0);
   const cols = ROWS.map((k, r) => {
-    const L = Math.min(1, Math.max(0, 0.5 + act[r] / 2.6)); const w = 0.45 + 0.55 * L;
-    const c = GREY.clone().lerp(regCols[r], w).multiplyScalar(0.62 + 0.62 * L);
-    if (L > 0.6) c.lerp(WHITE, (L - 0.6) * 0.45);
-    if (locks.includes(r)) c.lerp(WHITE, 0.25 + 0.35 * pulse);
+    const v = Math.min(1, Math.max(-1, act[r] / meanScale)), L = 0.5 + 0.5 * v;       // 0 = lowest, 1 = highest
+    const c = LOW.clone().lerp(regCols[r], Math.min(1, 0.08 + 1.1 * L ** 1.6)).multiplyScalar(0.6 + 0.7 * L);
+    if (L > 0.72) c.lerp(WHITE, (L - 0.72) * 1.2);
+    if (locks.includes(r)) c.lerp(WHITE, 0.15 + 0.30 * pulse);
     return c;
   });
   for (const { mesh, reg, shade, col } of brain.userData.meshes) {
     for (let i = 0; i < reg.length; i++) {
-      const r = reg[i]; const c = r >= 0 ? cols[r] : GREY; const s = shade[i] * (r >= 0 ? 1 : 0.92);
+      const r = reg[i]; const c = r >= 0 ? cols[r] : GREY; const s = shade[i] * (r >= 0 ? 1 : 0.55);
       col[3 * i] = c.r * s; col[3 * i + 1] = c.g * s; col[3 * i + 2] = c.b * s;
     }
     mesh.geometry.attributes.color.needsUpdate = true;
@@ -106,6 +110,7 @@ function specColour(u) { u = Math.min(1, Math.max(0, u)) * (SPEC_STOPS.length - 
 function drawStatic() {
   // the printed figure shows LAY.tune; for any other piece, repaint the data area with that piece
   staticLayer = document.createElement("canvas"); staticLayer.width = OW; staticLayer.height = OH; const g = staticLayer.getContext("2d");
+  { const [bx, by, bw, bh] = LAY.brain_box; g.fillStyle = "rgba(255,255,255,0.82)"; g.fillRect(px(bx - 0.005), py(by - 0.005), px(bw + 0.01), py(bh + 0.01)); }
   if (tune.id === LAY.tune) return;
   const xL = px(LAY.x0 - 0.006), xR = px(LAY.x1 + 0.012), yT = py(LAY.spec[0] - 0.012), yB = py(LAY.row_boxes[ROWS.length - 1][0] + LAY.row_boxes[0][1] + 0.004);
   g.fillStyle = "#FFFFFF"; g.fillRect(xL, yT, xR - xL, yB - yT);
@@ -159,7 +164,7 @@ function drawOverlay(t, time) {
 }
 
 // ---------------------------------------------------------------- scene content shared by AR and 3D modes
-let content, brain, figurePlane;
+let content, brain, figurePlane, brainHome, brainPlace;
 function buildContent() {
   content = new THREE.Group(); const h = 1 / LAY.aspect; OH = Math.round(OW * h);
   ocv = document.createElement("canvas"); ocv.width = OW; ocv.height = OH; octx = ocv.getContext("2d");
@@ -169,8 +174,9 @@ function buildContent() {
   brain = buildBrain(); const bb = LAY.brain_box;   // over the printed brain renders, floating towards the viewer
   const bx = bb[0] + bb[2] / 2 - 0.5, by = 0.5 * h - (bb[1] + bb[3] / 2) * h;
   brain.position.set(bx - 0.01, by + 0.01, 0.10); brain.scale.setScalar(0.27 / brain.userData.span); content.add(brain);
+  brainHome = { x: bx - 0.01, y: by + 0.01, size: 0.27, z0: 0.03, dz: 0.08 };
   const sh = new THREE.Mesh(new THREE.CircleGeometry(0.15, 48), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.16, depthWrite: false }));
-  sh.position.set(bx - 0.01, by - 0.02, 0.004); sh.scale.set(1, 0.55, 1); content.add(sh);
+  sh.position.set(bx - 0.01, by - 0.02, 0.004); sh.scale.set(1, 0.55, 1); content.add(sh); brainHome.shadow = sh;
   content.add(new THREE.HemisphereLight(0xffffff, 0x8a8078, 2.2)); const d = new THREE.DirectionalLight(0xffffff, 1.4); d.position.set(0.4, 0.8, 1.2); content.add(d);
 }
 function figureBacking() {             // 3D mode only: the printed figure itself
@@ -183,7 +189,8 @@ let rise = 0, t0clock = performance.now();
 function frame() {
   const time = (performance.now() - t0clock) / 1000; const t = DEBUG_T !== null ? +DEBUG_T : (audio.currentTime || 0);
   rise = Math.min(1, rise + 0.035); const e = 1 - Math.pow(1 - rise, 3);
-  brain.userData.inner.rotation.y = DEBUG_ROT !== null ? +DEBUG_ROT : Math.sin(time * 0.35) * 0.75; brain.position.z = 0.03 + 0.08 * e; brain.scale.setScalar((0.27 / brain.userData.span) * (0.2 + 0.8 * e));
+  brain.userData.inner.rotation.y = DEBUG_ROT !== null ? +DEBUG_ROT : Math.sin(time * 0.35) * 0.75; const B = (mode === "3d" && brainPlace) || brainHome;
+  brain.position.set(B.x, B.y, B.z0 + B.dz * e); brainHome.shadow.visible = B === brainHome; brain.scale.setScalar((B.size / brain.userData.span) * (0.2 + 0.8 * e));
   paintBrain(brain, t, time); drawOverlay(t, time); updateHud(t, time);
 }
 
@@ -216,7 +223,7 @@ function summary() {
 function updateHud(t, time) {
   const act = ROWS.map(k => valueAt(traces[k].mean, t)); const locks = activeLocks(t);
   document.querySelectorAll(".m").forEach((m, r) => {
-    const v = Math.max(-2.4, Math.min(2.4, act[r])) / 2.4; const f = m.querySelector(".fill");
+    const v = Math.max(-1, Math.min(1, act[r] / meanScale)); const f = m.querySelector(".fill");
     f.style.height = `${Math.abs(v) * 50}%`; f.style.bottom = v >= 0 ? "50%" : `${50 - Math.abs(v) * 50}%`;
     m.classList.toggle("lock", locks.some(l => l.region === ROWS[r]));
   });
@@ -273,11 +280,20 @@ function start3D() {
   const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.minDistance = 0.4; controls.maxDistance = 8;
   controls.minAzimuthAngle = -1.2; controls.maxAzimuthAngle = 1.2; controls.minPolarAngle = 0.5; controls.maxPolarAngle = 2.6;
   const fit = () => { const w = innerWidth, h = innerHeight; renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
-    const hud = $("#hud .sheet").getBoundingClientRect().height || 220; const vis = Math.max(0.35, (h - hud - 60) / h);
-    const vf = THREE.MathUtils.degToRad(camera.fov) / 2; const hf = Math.atan(Math.tan(vf) * camera.aspect);
-    const d = Math.max(0.56 / Math.tan(hf), (0.5 / LAY.aspect + 0.08) / (Math.tan(vf) * vis));
-    const off = (1 - vis) / 2 * 2 * d * Math.tan(vf);          // centre the figure in the space above the player
-    camera.position.set(0.0, -off, d); controls.target.set(0, -off, 0); controls.update(); };
+    // free screen area for the scene: above the bottom sheet (portrait) or left of the side panel (landscape)
+    const hb = $("#hud").getBoundingClientRect(), side = hb.left > 40;
+    const fw = side ? hb.left : w, fh_ = side ? h - 60 : Math.max(0.35 * h, h - (($("#hud .sheet").getBoundingClientRect().height || 220) + 60));
+    const fx = fw / 2 - w / 2, fy = side ? -30 : (h - fh_) / 2;              // centre of the free area, px from screen centre (y up)
+    const vf = THREE.MathUtils.degToRad(camera.fov) / 2, tv = Math.tan(vf), th = tv * camera.aspect;
+    const fh = 1 / LAY.aspect, avail = fw / fh_;
+    let x0 = -0.52, x1 = 0.52, y0 = -fh / 2 - 0.02, y1 = fh / 2 + 0.02;
+    if (avail < 1.3) { const S = 0.74; brainPlace = { x: 0, y: y1 + 0.03 + S * 0.42, size: S, z0: 0.06, dz: 0.10 }; y1 += 0.16 + S * 0.84; }
+    else { const S = 0.62; brainPlace = { x: x1 + 0.03 + S / 2, y: 0, size: S, z0: 0.06, dz: 0.10 }; x1 += 0.06 + S; }
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, hw = (x1 - x0) / 2 + 0.02, hh = (y1 - y0) / 2 + 0.03;
+    const d = Math.max(hw / (th * fw / w), hh / (tv * fh_ / h));             // fit the content into the free area
+    const ux = 2 * d * th / w, uy = 2 * d * tv / h;                           // scene units per pixel at the figure plane
+    const ex = cx - fx * ux, ey = cy - fy * uy;
+    camera.position.set(ex, ey, d); controls.target.set(ex, ey, 0); controls.update(); };
   fit(); addEventListener("resize", fit);
   r3d = { renderer, scene, fit, controls }; rise = 0;
   renderer.setAnimationLoop(() => { frame(); controls.update(); renderer.render(scene, camera); });
