@@ -245,7 +245,7 @@ async function startAR() {
   mode = "ar"; document.body.classList.add("ar"); $("#modeBtn").textContent = "3D view"; $("#hint").classList.remove("hidden"); setTracking(false, "Starting camera…");
   const { MindARThree } = await import("mindar-image-three");
   mindar = new MindARThree({ container: $("#stage"), imageTargetSrc: "data/targets.mind", maxTrack: 1, uiLoading: "no", uiScanning: "no", uiError: "no",
-    filterMinCF: 0.0005, filterBeta: 0.004 });
+    filterMinCF: 0.001, filterBeta: 1 });
   const { renderer, scene, camera } = mindar; renderer.outputColorSpace = THREE.SRGBColorSpace;
   const anchor = mindar.addAnchor(0); anchor.group.add(content);
   anchor.onTargetFound = () => { setTracking(true, "Figure found"); rise = 0;
